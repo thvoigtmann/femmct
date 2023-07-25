@@ -257,8 +257,8 @@ dphi_ = TrialFunction(P)
 correlatorsolver = LUSolver()
 
 # Time stepping
-for k in range(1, Nt + 1):
-    print('Time Step ', k, ' out of ', Nt)
+for timestep in range(1, Nt + 1):
+    print('Time Step ', timestep, ' out of ', Nt)
     t += dt
     
     # Evolution equation for the Finger tensors
@@ -557,7 +557,7 @@ for k in range(1, Nt + 1):
             assign(tau, projectTensor(tau + Constant(GInf)*phis[j][0]**Constant(2.)*(Bs[j] - Bs[j - 1])))
     
     # Turn off the pressure gradient after half of the simulation time has elapsed
-    if k == int(Nt/2):
+    if timestep == int(Nt/2):
         pIn = Constant(0.)
     
     # Solve the Stokes problem
@@ -572,7 +572,7 @@ for k in range(1, Nt + 1):
     
     # Export this current time step
     assign(velocity, u)
-    assign(pressure, p)
+    assign(pressure, projectScalar(p - Constant(assemble(p*dx)/assemble(Constant(1.)*dx))))
     assign(stress, projectTensor(Constant(2.*muS)*sym(grad(u)) + tau - pressure*I))
     assign(strainrate, projectTensor(Constant(2.)*sym(grad(u))))
     
