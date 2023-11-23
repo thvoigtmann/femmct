@@ -8,20 +8,22 @@ parameters['form_compiler']['quadrature_degree'] = 4
 # Problem parameters
 length = 5. # channel length
 height = 1. # channel height
-T = 50. # final time
+cylrad = 0.2 # radius of cylindrical obstacle
+T = 50.4 # final time
 Nx = 50 # subintervals in horizontal direction
 Ny = 50 # subintervals in vertical direction
-Nt = 500 # subintervals in time
+Nmshr = 128 # elements across diagonal (for mshr)
 Na = 8 # subintervals in history (age) at the finest resolution
 Nb = 6 # number of blocks in history (age) with constant resolution each
+Nt = int(Na * (2**Nb - 1)) # subintervals in time
 rho = 1. # density
 muS = 1. # solvent viscosity
-deltap = 2.5 # pressure difference between inlet and outlet
+deltap = 1.0 # pressure difference between inlet and outlet
 GInf = 1. # shear modulus at short time scales
 lambdaC = 1. # constant time-scale parameter in the MCT model
 gammaC = .1 # characteristic strain parameter in the MCT model
-v1 = 0.
-v2 = 6.
+v1 = 2.*(sqrt(2.) - 1.) + 0.01/(sqrt(2.) - 1.) # MCT coupling coefficient
+v2 = 2. # MCT coupling coefficient
 absTol = 1E-9 # absolute tolerance for nonlinear iterations
 relTol = 1E-6 # relative tolerance for nonlinear iterations
 maxIter = 25 # maximum number of nonlinear iterations
@@ -83,7 +85,11 @@ def diff_memory_kernel(phi):
     return Constant(v1) + Constant(2.*v2)*phi
 
 # Geometric set up
-mesh = RectangleMesh(Point(0., 0.), Point(length, height), Nx, Ny, diagonal = 'crossed')
+channel = Rectangle(Point(0.0, 0.0), Point(length, heigth))
+cyl = Circle(Point(1.0, 0.5), cylrad)
+domain = channel - cyl
+mesh = generate_mesh(domain, Nmshr)
+
 
 class Inflow(SubDomain):
     def inside(self, x, on_boundary):
@@ -101,6 +107,10 @@ class BottomWall(SubDomain):
     def inside(self, x, on_boundary):
         return (on_boundary and near(x[1], 0.))
 
+class Cylinder(SubDomain):
+    def inside(self, x, on_boundary):
+        return (on_boundary and ( (x[0] - 1.0)**2 + (x[1] - 0.5)**2 < cylrad**2 + DOLFIN_EPS))
+
 class PeriodicBoundary(SubDomain):
     # values on the inlet will be overwritten with values on the outlet
     def inside(self, x, on_boundary):
@@ -114,6 +124,7 @@ inflow = Inflow()
 outflow = Outflow()
 topWall = TopWall()
 bottomWall = BottomWall()
+cylinder = Cylinder()
 
 boundaries = MeshFunction('size_t', mesh, 1)
 boundaries.set_all(0)
@@ -121,6 +132,7 @@ inflow.mark(boundaries, 1)
 outflow.mark(boundaries, 2)
 topWall.mark(boundaries, 3)
 bottomWall.mark(boundaries, 4)
+cylinder.mark(boundaries, 5)
 
 ds = Measure('ds', mesh)(subdomain_data = boundaries)
 dx = Measure('dx', mesh)
