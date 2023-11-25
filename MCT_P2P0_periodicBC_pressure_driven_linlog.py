@@ -1,5 +1,6 @@
 from dolfin import *
 import numpy as np
+import mshr
 
 parameters['ghost_mode'] = 'shared_facet'
 parameters['form_compiler']['optimize'] = True
@@ -85,10 +86,10 @@ def diff_memory_kernel(phi):
     return Constant(v1) + Constant(2.*v2)*phi
 
 # Geometric set up
-channel = Rectangle(Point(0.0, 0.0), Point(length, heigth))
-cyl = Circle(Point(1.0, 0.5), cylrad)
+channel = mshr.Rectangle(Point(0.0, 0.0), Point(length, height))
+cyl = mshr.Circle(Point(1.0, 0.5), cylrad)
 domain = channel - cyl
-mesh = generate_mesh(domain, Nmshr)
+mesh = mshr.generate_mesh(domain, Nmshr)
 
 
 class Inflow(SubDomain):
