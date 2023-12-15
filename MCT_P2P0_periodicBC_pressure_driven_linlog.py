@@ -13,13 +13,14 @@ cylrad = 0.2 # radius of cylindrical obstacle
 T = 50.4 # final time
 Nx = 50 # subintervals in horizontal direction
 Ny = 50 # subintervals in vertical direction
-Nmshr = 128 # elements across diagonal (for mshr)
+Nmshr = 128 # elements across diagonal (for mshr only)
 Na = 8 # subintervals in history (age) at the finest resolution
 Nb = 6 # number of blocks in history (age) with constant resolution each
 Nt = int(Na * (2**Nb - 1)) # subintervals in time
 rho = 1. # density
 muS = 1. # solvent viscosity
-deltap = 1.0 # pressure difference between inlet and outlet
+deltap = 2.0 # pressure difference between inlet and outlet
+#u_top = 1.0 # velocity on top wall which is driving the fluid flow
 GInf = 1. # shear modulus at short time scales
 lambdaC = 1. # constant time-scale parameter in the MCT model
 gammaC = .1 # characteristic strain parameter in the MCT model
@@ -62,7 +63,9 @@ if innerAdvection:
     path += 'innerAdv_'
 if outerAdvection:
     path += 'outerAdv_'
-path += str(Nb) + 'x' + str(Na) + '_pressuredriven_dp-' + str(deltap) + '_GInf-' + str(GInf) +'_v1-' + str(v1) + '_v2-' + str(v2)
+#path += str(Nb) + 'x' + str(Na) + '_pressuredriven_dp-' + str(deltap) + '_GInf-' + str(GInf) +'_v1-' + str(v1) + '_v2-' + str(v2)
+path += str(Nb) + 'x' + str(Na) + '_cylinder_pressuredriven_dp-' + str(deltap) + '_GInf-' + str(GInf) +'_v1-' + str(v1) + '_v2-' + str(v2)
+#path = 'MCT_' + str(Nb) + 'x' + str(Na) + '_liddriven_dp-' + str(u_top) + '_GInf-' + str(GInf) +'_v1-' + str(v1) + '_v2-' + str(v2)
    
 Nh = Na*Nb # total number of deformation fields used to capture the deformation history
 Ntprime = (2**Nb - 1)*Na # maximum age in multiples of dt
@@ -90,6 +93,12 @@ channel = mshr.Rectangle(Point(0.0, 0.0), Point(length, height))
 cyl = mshr.Circle(Point(1.0, 0.5), cylrad)
 domain = channel - cyl
 mesh = mshr.generate_mesh(domain, Nmshr)
+# alternative:
+#mesh = Mesh()
+#with XDMFFile("41ContractionExpansion.xdmf") as infile:
+#    infile.read(mesh)
+#version used for lid-driven:
+#mesh = RectangleMesh(Point(0., 0.), Point(length, height), Nx, Ny, diagonal = 'crossed')
 
 
 class Inflow(SubDomain):
@@ -112,6 +121,16 @@ class Cylinder(SubDomain):
     def inside(self, x, on_boundary):
         return (on_boundary and ( (x[0] - 1.0)**2 + (x[1] - 0.5)**2 < cylrad**2 + DOLFIN_EPS))
 
+# for 4:1 contraction:
+class Upper(SubDomain):
+    def inside(self, x, on_boundary):
+        return (on_boundary and ( (near(x[0], 4) or near(x[1], 0.625) or near(x[0], 6)) ) )
+        
+class Lower(SubDomain):
+    def inside(self, x, on_boundary):
+        return (on_boundary and ( (near(x[0], 4) or near(x[1], 0.375) or near(x[0], 6)) ) )
+        
+
 class PeriodicBoundary(SubDomain):
     # values on the inlet will be overwritten with values on the outlet
     def inside(self, x, on_boundary):
@@ -126,6 +145,8 @@ outflow = Outflow()
 topWall = TopWall()
 bottomWall = BottomWall()
 cylinder = Cylinder()
+#upper = Upper()
+#lower = Lower()
 
 boundaries = MeshFunction('size_t', mesh, 1)
 boundaries.set_all(0)
@@ -134,6 +155,8 @@ outflow.mark(boundaries, 2)
 topWall.mark(boundaries, 3)
 bottomWall.mark(boundaries, 4)
 cylinder.mark(boundaries, 5)
+#upper.mark(boundaries, 5)
+#lower.mark(boundaries, 6)
 
 ds = Measure('ds', mesh)(subdomain_data = boundaries)
 dx = Measure('dx', mesh)
@@ -181,8 +204,14 @@ def projectTensor(r):
 
 # Boundary conditions
 BCuTop = DirichletBC(UP.sub(0), Constant((0., 0.)), boundaries, 3)
+#BCuTop = DirichletBC(UP.sub(0), Constant((u_top, 0.)), boundaries, 3) # for lid-driven
 BCuBottom = DirichletBC(UP.sub(0), Constant((0., 0.)), boundaries, 4)
-BCs = [BCuTop, BCuBottom]
+BCuCylinder = DirichletBC(UP.sub(0), Constant((0., 0.)), boundaries, 5)
+#BCs = [BCuTop, BCuBottom]
+BCs = [BCuTop, BCuBottom, BCuCylinder]
+#BCuUpper = DirichletBC(UP.sub(0), Constant((0., 0.)), boundaries, 5)
+#BCuLower = DirichletBC(UP.sub(0), Constant((0., 0.)), boundaries, 6)
+#BCs = [BCuTop, BCuBottom, BCuUpper, BCuLower]
 
 pIn = Constant(deltap)
 pOut = Constant(0.)
@@ -241,6 +270,8 @@ velocityFile = File(path + '/velocity.pvd')
 pressureFile = File(path + '/pressure.pvd')
 stressFile = File(path + '/stress.pvd')
 strainrateFile = File(path + '/strainrate.pvd')
+polystressFile = File(path + '/polystress.pvd')
+N1File = File(path + '/N1.pvd')
 
 t = 0.
 
@@ -248,11 +279,15 @@ velocity = Function(U, name = 'velocity')
 pressure = Function(P, name = 'pressure')
 stress = Function(Tau, name = 'total stress')
 strainrate = Function(Tau, name = 'strain rate')
+polystress = Function(Tau, name = 'polystress')
+N1 = Function(P, name = 'N1')
 
 velocityFile << (velocity, t)
 pressureFile << (pressure, t)
 stressFile << (stress, t)
 strainrateFile << (strainrate, t)
+polystressFile << (polystress, t)
+N1File << (N1, t)
 
 # Evolution equation for Finger tensors (w/- backward Euler in time and age)
 B_ = TrialFunction(Tau)
@@ -273,6 +308,10 @@ correlatorsolver = LUSolver()
 for timestep in range(1, Nt + 1):
     print('Time Step ', timestep, ' out of ', Nt)
     t += dt
+    
+    #cessation of flow for lid-driven setup
+    #if (k == Nt//4):
+    #    u_top = 0.
     
     # Evolution equation for the Finger tensors
     un = dot(u, n)
@@ -349,6 +388,13 @@ for timestep in range(1, Nt + 1):
                 # Newton's method to solve for phi
                 for ni in range(1, maxIter + 1):
                     # The nearest younger correlator of age a = 0 is 1
+                    # code without any MCT advection:
+                    #FMCT.assign(projectScalar(Constant(lambdaC/dt)*(phi - Constant(1.)) + phi + hs[0]*hs[0]*memory_kernel(phi)*(phi - Constant(1.))))
+                    #DFMCT.assign(projectScalar(Constant(lambdaC/dt + 1.) + hs[0]*hs[0]*memory_kernel(phi) + hs[0]*hs[0]*diff_memory_kernel(phi)*(phi - Constant(1.))))
+                    
+                    #dphi.assign(projectScalar(-FMCT/DFMCT))
+                    #
+                    # code with MCT advection:
                     RHSMCT = Constant(lambdaC/dt)*(phi - Constant(1.))*psi*dx
                     if outerAdvection:
                         RHSMCT -= Constant(lambdaC)*inner(phi, div(outer(psi, u)))*dx
@@ -386,6 +432,7 @@ for timestep in range(1, Nt + 1):
                     correlatorsolver.set_operator(MCT_mat)
                     correlatorsolver.solve(dphi.vector(), MCT_vec)
                     
+                    # end of MCT advection code
                     phi.assign(phi + dphi)
                     
                     dphiL2 = np.sqrt(assemble(dphi*dphi*dx)) 
@@ -475,6 +522,11 @@ for timestep in range(1, Nt + 1):
                 # Newton's method to solve for phi
                 for ni in range(1, maxIter + 1):
                     # Terms of type (2): 0, ..., J
+                    # no MCT advection:
+                    #FMCT.assign(projectScalar(Constant(lambdaC/dt)*(phi - phis[j][0]) + phi + hs[j]*hs[j]*memory_kernel(phi)*(phis[J][int(age[j] - age[J])] - Constant(1.))))
+                    #DFMCT.assign(projectScalar(Constant(lambdaC/dt + 1.) + hs[j]*hs[j]*diff_memory_kernel(phi)*(phis[J][int(age[j] - age[J])] - Constant(1.))))
+                    
+                    # MCT advection:
                     RHSMCT = Constant(lambdaC/dt)*(phi - phis[j][0])*psi*dx
                     if outerAdvection:
                         RHSMCT -= Constant(lambdaC)*inner(phi, div(outer(psi, u)))*dx
@@ -494,17 +546,23 @@ for timestep in range(1, Nt + 1):
                             RHSMCT -= Constant(stepsize[i]*dt)*inner(phis[i][int(age[j] - age[i])], div(outer(hs[j]*hs[j]*memory_kernel(phi)*psi, uOld)))*dx
                             RHSMCT += Constant(stepsize[i]*dt)*inner(uOldnPos('+')*phis[i][int(age[j] - age[i])]('+') + uOldnNeg('+')*phis[i][int(age[j] - age[i])]('-'), jump(hs[j]*hs[j]*memory_kernel(phi)*psi))*dS
                             RHSMCT += Constant(stepsize[i]*dt)*inner(uOldn*phis[i][int(age[j] - age[i])], hs[j]*hs[j]*memory_kernel(phi)*psi)*ds
+                    # end MCT advection
                     
                     # Terms of type (2): j, ..., j-J
                     HM.assign(Function(P))
                     for i in range(J + 1):
                         HM.assign(HM + projectScalar(Constant(stepsize[i]/np.sum(stepsize[0 : J + 1]))*hs[i]*memory_kernel(phis[i][0])))
+                    # no MCT advection:
+                    #FMCT.assign(FMCT + projectScalar(hs[j]*HM*(phi - phis[j-1][int(age[j] - age[j - 1])])))
+                    #DFMCT.assign(DFMCT + projectScalar(hs[j]*HM))
+                    #dphi.assign(projectScalar(-(FMCT + F0MCT)/DFMCT))
+                    # MCT advection:
                     RHSMCT += hs[j]*HM*(phi - phis[j-1][int(age[j] - age[j - 1])])*psi*dx
                     if innerAdvection:
                         RHSMCT -= Constant(np.sum(stepsize[0 : J + 1])*dt)*inner(phi, div(outer(hs[j]*HM*psi, u)))*dx
                         RHSMCT += Constant(np.sum(stepsize[0 : J + 1])*dt)*inner(unPos('+')*phi('+') + unNeg('+')*phi('-'), jump(hs[j]*HM*psi))*dS
                         RHSMCT += Constant(np.sum(stepsize[0 : J + 1])*dt)*inner(un*phi, hs[j]*HM*psi)*ds
-                    
+
                     # Terms of type (3): J, ..., j-J 
                     RHSMCT += F0MCT*psi*dx
                     if innerAdvection:
@@ -542,7 +600,8 @@ for timestep in range(1, Nt + 1):
                     
                     correlatorsolver.set_operator(MCT_mat)
                     correlatorsolver.solve(dphi.vector(), MCT_vec)
-                    
+                    # end MCT advection
+
                     phi.assign(phi + dphi)
                     
                     dphiL2 = np.sqrt(assemble(dphi*dphi*dx)) 
@@ -570,7 +629,7 @@ for timestep in range(1, Nt + 1):
             assign(tau, projectTensor(tau + Constant(GInf)*phis[j][0]**Constant(2.)*(Bs[j] - Bs[j - 1])))
     
     # Turn off the pressure gradient after half of the simulation time has elapsed
-    if timestep == int(Nt/2):
+    if timestep == int(Nt/2): # or at Nt/4
         pIn = Constant(0.)
     
     # Solve the Stokes problem
@@ -578,7 +637,7 @@ for timestep in range(1, Nt + 1):
     RHSNS = Constant(rho/dt)*inner(u0, v)*dx - inner(tau, sym(grad(v)))*dx + dot(avg(tau)*n('+'), jump(v))*dS + dot(tau*n, v)*ds
     RHSNS -= dot(pIn*n, v)*ds(1) + dot(pOut*n, v)*ds(2)
     
-    solve(LHSNS == RHSNS, up, BCs)
+    solve(LHSNS == RHSNS, up, BCs) # solver_parameters={"linear_solver":"mumps"} # did Sebastian use this for production?
     
     assign(u, up.sub(0))
     assign(p, up.sub(1))
@@ -588,11 +647,15 @@ for timestep in range(1, Nt + 1):
     assign(pressure, projectScalar(p - Constant(assemble(p*dx)/assemble(Constant(1.)*dx))))
     assign(stress, projectTensor(Constant(2.*muS)*sym(grad(u)) + tau - pressure*I))
     assign(strainrate, projectTensor(Constant(2.)*sym(grad(u))))
+    assign(polystress, tau)
+    assign(N1, projectScalar( Constant(2.*muS)*sym(grad(u))[0,0] + tau[0,0] - Constant(2.*muS)*sym(grad(u))[1,1] - tau[1,1] ))
     
     velocityFile << (velocity, t)
     pressureFile << (pressure, t)
     stressFile << (stress, t)
     strainrateFile << (strainrate, t)
+    polystressFile << (polystress, t)
+    N1File << (N1, t)
     
     u0.assign(u)
     for i in range(Ntprime - 1, 0, -1):
