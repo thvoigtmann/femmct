@@ -60,7 +60,6 @@ boundary_conditions = {
 
 solver = femmct.StokesSolver(mesh, constrained_domain = PeriodicBoundary(), subdomain_data = boundaries, boundary_conditions = boundary_conditions)
 
-solver.create_files(path)
 
 def switchoff_dp (solver_obj, step):
     if step == int(solver_obj.Nt/2):
@@ -68,7 +67,10 @@ def switchoff_dp (solver_obj, step):
 
 solver.callback = switchoff_dp
 
-#solver.initialize (T = 50., Nt = 500, Na = 16, Nb = 6)
-solver.initialize (T = 5., Nt = 50, Na = 16, Nb = 6)
+model = femmct.IntegralWhiteMetznerModel (Ginf=1.0, lambdaC=10., gammaC=0.1)
+#solver.initialize (model = model, T = 50., Nt = 500, Na = 16, Nb = 6)
+solver.initialize (model = model, T = 5., Nt = 50, Na = 16, Nb = 6)
+
+solver.create_files(path)
 
 solver.loop()
