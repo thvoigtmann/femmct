@@ -6,6 +6,8 @@ class IntegralWhiteMetznerModel(object):
         self.GInf = Ginf
         self.lambdaC = lambdaC
         self.gammaC = gammaC
+    def adjust (self, Nt, Na, Nb):
+        return Nt, Na, Nb
     def initialize (self, solver):
         # age on lin-log grid in multiples of dt
         age = np.ones(solver.Nh)
@@ -53,3 +55,6 @@ class IntegralWhiteMetznerModel(object):
                 dolfin.assign(tau, solver.fn.projectTensor(Gs[0]*(solver.Bs[0] - solver.Bs0)))
             else:
                 dolfin.assign(tau, solver.fn.projectTensor(tau + Gs[j]*(solver.Bs[j] - solver.Bs[j-1])))
+
+    def post_step (self, solver, u):
+        return

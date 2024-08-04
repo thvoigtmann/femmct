@@ -41,6 +41,8 @@ class StokesSolver(object):
         self.pressureFile = DevNullFile()
         self.stressFile = DevNullFile()
         self.strainrateFile = DevNullFile()
+        self.polystressFile = DevNullFile()
+        self.N1File = DevNullFile()
 
 
     def apply_bc (self, boundary_conditions, subdomain_data = None):
@@ -62,6 +64,8 @@ class StokesSolver(object):
         self.Nt = Nt
         self.Na = Na
         self.Nb = Nb
+
+        self.Nt, self.Na, self.Nb = model.adjust(Nt, Na, Nb)
 
         # sanitize input: maximum age is (2**Nb - 1)*Na*dt
         # anything that exceeds Nt will never be needed
@@ -101,7 +105,7 @@ class StokesSolver(object):
         #self.Gs0 = dolfin.Constant(model.GInf)
 
     # loop should initialize all instantaneous functions etc afresh
-    def loop (self):
+    def loop (self, **kwargs):
         n, dx, ds = self.n, self.dx, self.ds
         #Bs, Gs = self.Bs, self.Gs
         Bs = self.Bs
@@ -124,11 +128,15 @@ class StokesSolver(object):
         pressure = dolfin.Function(self.fn.P, name = 'pressure')
         stress = dolfin.Function(self.fn.Tau, name = 'total stress')
         strainrate = dolfin.Function(self.fn.Tau, name = 'strain rate')
+        polystress = dolfin.Function(self.fn.Tau, name = 'polystress')
+        N1 = dolfin.Function(self.fn.Tau, name = 'N1')
 
         self.velocityFile << (velocity, t)
         self.pressureFile << (pressure, t)
         self.stressFile << (stress, t)
         self.strainrateFile << (strainrate, t)
+        self.polystressFile << (polystress, t)
+        self.N1File << (N1, t)
 
         # to solve the evolution equation for the Finger tensors:
         B_ = dolfin.TrialFunction(self.fn.Tau)
@@ -211,27 +219,38 @@ class StokesSolver(object):
             for idx,dp in self.dps.items():
                 RHSNS -= dolfin.dot(dp*n, v)*ds(idx)
 
-            dolfin.solve(LHSNS == RHSNS, up, self.BClist)
+            dolfin.solve(LHSNS == RHSNS, up, self.BClist, **kwargs)
 
             dolfin.assign(u, up.sub(0))
             dolfin.assign(p, up.sub(1))
 
             # export the current time step
+            # TODO adjust to MCT code that does it differently here
             dolfin.assign(velocity, u)
             dolfin.assign(pressure, p)
+            #dolfin.assign(pressure, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
             dolfin.assign(stress, self.fn.projectTensor(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u)) + tau - pressure*self.I))
             dolfin.assign(strainrate, self.fn.projectTensor(dolfin.Constant(2.)*dolfin.sym(dolfin.grad(u))))
+            #dolfin.assign(polystress, tau)
+            #dolfin.assign(N1, self.fn.projectScalar(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[0,0] + tau[0,0] - dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[1,1] - tau[1,1]))
 
             self.velocityFile << (velocity, t)
             self.pressureFile << (pressure, t)
             self.stressFile << (stress, t)
             self.strainrateFile << (strainrate, t)
+            self.polystressFile << (polystress, t)
+            self.N1File << (N1, t)
 
             # prepare for next time step
             u0.assign(u)
+            self.model.post_step (self, u)
 
-    def create_files(self, path='.'):
+    def create_files(self, path='.', polystress=False, N1=False):
         self.velocityFile = dolfin.File(path + '/velocity.pvd')
         self.pressureFile = dolfin.File(path + '/pressure.pvd')
         self.stressFile = dolfin.File(path + '/stress.pvd')
         self.strainrateFile = dolfin.File(path + '/strainrate.pvd')
+        if polystress:
+            self.polystressFile = dolfin.File(path + '/polystress.pvd')
+        if N1:
+            self.N1File = dolfin.File(path + '/N1.pvd')
