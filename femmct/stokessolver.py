@@ -65,7 +65,7 @@ class StokesSolver(object):
         self.Na = Na
         self.Nb = Nb
 
-        self.Nt, self.Na, self.Nb = model.adjust(Nt, Na, Nb)
+        self.Nt, self.Na, self.Nb = self.model.adjust(Nt, Na, Nb)
 
         # sanitize input: maximum age is (2**Nb - 1)*Na*dt
         # anything that exceeds Nt will never be needed
