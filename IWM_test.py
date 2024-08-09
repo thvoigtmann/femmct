@@ -1,6 +1,8 @@
 import dolfin
 import femmct
 
+import matplotlib.pyplot as plt
+
 path = 'iwmtest'
 
 # make mesh
@@ -62,6 +64,7 @@ solver = femmct.StokesSolver(mesh, constrained_domain = PeriodicBoundary(), subd
 
 
 def switchoff_dp (solver_obj, step):
+    print ("PT", solver_obj.velocity(dolfin.Point((0.25,0.25))))
     if step == int(solver_obj.Nt/2):
       solver_obj.apply_bc ({1: femmct.p_inlet (0.)})
 
@@ -73,4 +76,28 @@ solver.initialize (model = model, T = 5., Nt = 50, Na = 16, Nb = 6)
 
 solver.create_files(path)
 
+fig, ax = plt.subplots()
+plt.show(block=False)
+plt.ion()
+ts = [0.]
+vs = [0.]
+graph, = plt.plot(ts,vs)
+plt.draw()
+plt.pause(0.1)
+ 
+
+def update_plot(solver_obj, t):
+    ts.append(t)
+    vs.append(solver_obj.velocity(dolfin.Point((0.25,0.25)))[0])
+    graph.set_xdata(ts)
+    graph.set_ydata(vs)
+    ax.relim()
+    ax.autoscale_view()
+    plt.draw()
+    plt.pause(0.1)
+
+solver.post_step_callback = update_plot
+
 solver.loop()
+
+plt.show(block=True)

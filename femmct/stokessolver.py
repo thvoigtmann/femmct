@@ -36,6 +36,7 @@ class StokesSolver(object):
             self.apply_bc (kwargs['boundary_conditions'], kwargs['subdomain_data'])
 
         self.callback = lambda obj, step: None
+        self.post_step_callback = lambda obj, t: None
 
         self.velocityFile = DevNullFile()
         self.pressureFile = DevNullFile()
@@ -124,19 +125,19 @@ class StokesSolver(object):
         muS = self.parameters['muS']
 
         t = 0.
-        velocity = dolfin.Function(self.fn.U, name = 'velocity')
-        pressure = dolfin.Function(self.fn.P, name = 'pressure')
-        stress = dolfin.Function(self.fn.Tau, name = 'total stress')
-        strainrate = dolfin.Function(self.fn.Tau, name = 'strain rate')
-        polystress = dolfin.Function(self.fn.Tau, name = 'polystress')
-        N1 = dolfin.Function(self.fn.Tau, name = 'N1')
+        self.velocity = dolfin.Function(self.fn.U, name = 'velocity')
+        self.pressure = dolfin.Function(self.fn.P, name = 'pressure')
+        self.stress = dolfin.Function(self.fn.Tau, name = 'total stress')
+        self.strainrate = dolfin.Function(self.fn.Tau, name = 'strain rate')
+        self.polystress = dolfin.Function(self.fn.Tau, name = 'polystress')
+        self.N1 = dolfin.Function(self.fn.Tau, name = 'N1')
 
-        self.velocityFile << (velocity, t)
-        self.pressureFile << (pressure, t)
-        self.stressFile << (stress, t)
-        self.strainrateFile << (strainrate, t)
-        self.polystressFile << (polystress, t)
-        self.N1File << (N1, t)
+        self.velocityFile << (self.velocity, t)
+        self.pressureFile << (self.pressure, t)
+        self.stressFile << (self.stress, t)
+        self.strainrateFile << (self.strainrate, t)
+        self.polystressFile << (self.polystress, t)
+        self.N1File << (self.N1, t)
 
         # to solve the evolution equation for the Finger tensors:
         B_ = dolfin.TrialFunction(self.fn.Tau)
@@ -226,24 +227,25 @@ class StokesSolver(object):
 
             # export the current time step
             # TODO adjust to MCT code that does it differently here
-            dolfin.assign(velocity, u)
-            dolfin.assign(pressure, p)
-            #dolfin.assign(pressure, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
-            dolfin.assign(stress, self.fn.projectTensor(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u)) + tau - pressure*self.I))
-            dolfin.assign(strainrate, self.fn.projectTensor(dolfin.Constant(2.)*dolfin.sym(dolfin.grad(u))))
-            #dolfin.assign(polystress, tau)
-            #dolfin.assign(N1, self.fn.projectScalar(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[0,0] + tau[0,0] - dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[1,1] - tau[1,1]))
+            dolfin.assign(self.velocity, u)
+            dolfin.assign(self.pressure, p)
+            #dolfin.assign(self.pressure, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
+            dolfin.assign(self.stress, self.fn.projectTensor(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u)) + tau - self.pressure*self.I))
+            dolfin.assign(self.strainrate, self.fn.projectTensor(dolfin.Constant(2.)*dolfin.sym(dolfin.grad(u))))
+            #dolfin.assign(self.polystress, tau)
+            #dolfin.assign(self.N1, self.fn.projectScalar(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[0,0] + tau[0,0] - dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[1,1] - tau[1,1]))
 
-            self.velocityFile << (velocity, t)
-            self.pressureFile << (pressure, t)
-            self.stressFile << (stress, t)
-            self.strainrateFile << (strainrate, t)
-            self.polystressFile << (polystress, t)
-            self.N1File << (N1, t)
+            self.velocityFile << (self.velocity, t)
+            self.pressureFile << (self.pressure, t)
+            self.stressFile << (self.stress, t)
+            self.strainrateFile << (self.strainrate, t)
+            self.polystressFile << (self.polystress, t)
+            self.N1File << (self.N1, t)
 
             # prepare for next time step
             u0.assign(u)
             self.model.post_step (self, u)
+            self.post_step_callback(self, t)
 
     def create_files(self, path='.', polystress=False, N1=False):
         self.velocityFile = dolfin.File(path + '/velocity.pvd')
