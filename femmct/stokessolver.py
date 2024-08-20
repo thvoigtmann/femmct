@@ -106,7 +106,11 @@ class StokesSolver(object):
         #self.Gs0 = dolfin.Constant(model.GInf)
 
     # loop should initialize all instantaneous functions etc afresh
-    def loop (self, **kwargs):
+    # kwargs can contain boolean settings for stress, strainrate, polystress,
+    # or N1, True to calculate them (and possibly output, depending on whether
+    # the file has been created), they all default to False except stress and
+    # strainrate that default to true
+    def loop (self, stress=True, strainrate=True, polystress=False, N1=False, **kwargs):
         n, dx, ds = self.n, self.dx, self.ds
         #Bs, Gs = self.Bs, self.Gs
         Bs = self.Bs
@@ -127,17 +131,30 @@ class StokesSolver(object):
         t = 0.
         self.velocity = dolfin.Function(self.fn.U, name = 'velocity')
         self.pressure = dolfin.Function(self.fn.P, name = 'pressure')
-        self.stress = dolfin.Function(self.fn.Tau, name = 'total stress')
-        self.strainrate = dolfin.Function(self.fn.Tau, name = 'strain rate')
-        self.polystress = dolfin.Function(self.fn.Tau, name = 'polystress')
-        self.N1 = dolfin.Function(self.fn.Tau, name = 'N1')
 
         self.velocityFile << (self.velocity, t)
         self.pressureFile << (self.pressure, t)
-        self.stressFile << (self.stress, t)
-        self.strainrateFile << (self.strainrate, t)
-        self.polystressFile << (self.polystress, t)
-        self.N1File << (self.N1, t)
+
+        if stress:
+            self.stress = dolfin.Function(self.fn.Tau, name = 'total stress')
+            self.stressFile << (self.stress, t)
+        else:
+            self.stress = None
+        if strainrate:
+            self.strainrate = dolfin.Function(self.fn.Tau, name = 'strain rate')
+            self.strainrateFile << (self.strainrate, t)
+        else:
+            self.strainrate = None
+        if polystress:
+            self.polystress = dolfin.Function(self.fn.Tau, name = 'polystress')
+            self.polystressFile << (self.polystress, t)
+        else:
+            self.polystress = None
+        if N1:
+            self.N1 = dolfin.Function(self.fn.P, name = 'N1')
+            self.N1File << (self.N1, t)
+        else:
+            self.N1 = None
 
         # to solve the evolution equation for the Finger tensors:
         B_ = dolfin.TrialFunction(self.fn.Tau)
@@ -229,18 +246,23 @@ class StokesSolver(object):
             # TODO adjust to MCT code that does it differently here
             dolfin.assign(self.velocity, u)
             dolfin.assign(self.pressure, p)
-            #dolfin.assign(self.pressure, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
-            dolfin.assign(self.stress, self.fn.projectTensor(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u)) + tau - self.pressure*self.I))
-            dolfin.assign(self.strainrate, self.fn.projectTensor(dolfin.Constant(2.)*dolfin.sym(dolfin.grad(u))))
-            #dolfin.assign(self.polystress, tau)
-            #dolfin.assign(self.N1, self.fn.projectScalar(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[0,0] + tau[0,0] - dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[1,1] - tau[1,1]))
-
+            #dolfin.assign(self.pressure2, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
             self.velocityFile << (self.velocity, t)
             self.pressureFile << (self.pressure, t)
-            self.stressFile << (self.stress, t)
-            self.strainrateFile << (self.strainrate, t)
-            self.polystressFile << (self.polystress, t)
-            self.N1File << (self.N1, t)
+
+            if self.stress:
+                dolfin.assign(self.stress, self.fn.projectTensor(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u)) + tau - self.pressure*self.I))
+                self.stressFile << (self.stress, t)
+            if self.strainrate:
+                dolfin.assign(self.strainrate, self.fn.projectTensor(dolfin.Constant(2.)*dolfin.sym(dolfin.grad(u))))
+                self.strainrateFile << (self.strainrate, t)
+            if self.polystress:
+                dolfin.assign(self.polystress, tau)
+                self.polystressFile << (self.polystress, t)
+            if self.N1:
+                dolfin.assign(self.N1, self.fn.projectScalar(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[0,0] + tau[0,0] - dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[1,1] - tau[1,1]))
+                self.N1File << (self.N1, t)
+
 
             # prepare for next time step
             u0.assign(u)

@@ -82,6 +82,6 @@ model = femmct.mct.F12Model (v1 = 2.*(np.sqrt(2.)-1.) + 0.01/(np.sqrt(2.)-1.), v
 #solver.initialize (model = model, T = 50.4, Nt = 500, Na = 8, Nb = 6)
 solver.initialize (model = model, T = 50.4, Nt = 500, Na = 4, Nb = 3)
 
-solver.create_files(path)
+solver.create_files(path, polystress=True, N1=True)
 
-solver.loop(solver_parameters = {'linear_solver': 'mumps'})
+solver.loop(solver_parameters = {'linear_solver': 'mumps'}, polystress=True, N1=True)
