@@ -110,7 +110,7 @@ class StokesSolver(object):
     # or N1, True to calculate them (and possibly output, depending on whether
     # the file has been created), they all default to False except stress and
     # strainrate that default to true
-    def loop (self, stress=True, strainrate=True, polystress=False, N1=False, **kwargs):
+    def loop (self, stress=True, strainrate=True, polystress=False, N1=False, normalize_pressure=True, **kwargs):
         n, dx, ds = self.n, self.dx, self.ds
         #Bs, Gs = self.Bs, self.Gs
         Bs = self.Bs
@@ -243,10 +243,11 @@ class StokesSolver(object):
             dolfin.assign(p, up.sub(1))
 
             # export the current time step
-            # TODO adjust to MCT code that does it differently here
             dolfin.assign(self.velocity, u)
-            dolfin.assign(self.pressure, p)
-            #dolfin.assign(self.pressure2, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
+            if normalize_pressure:
+                dolfin.assign(self.pressure, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
+            else:
+                dolfin.assign(self.pressure, p)
             self.velocityFile << (self.velocity, t)
             self.pressureFile << (self.pressure, t)
 
