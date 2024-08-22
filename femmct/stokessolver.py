@@ -81,29 +81,18 @@ class StokesSolver(object):
         # time step
         self.dt = T/self.Nt
 
-        # age on lin-log grid in multiples of dt
-        #age = np.ones(self.Nh)
-        #for l in range(self.Nb):
-        #    for m in range(self.Na):
-        #        age[l*Na + m] = (2**l - 1)*Na + 2**l*(m+1)
-
         self.Bs = [] # array of Finger tensor fields of increasing age
         # Bs[0] = youngest Finger tensor with age a = dt
         # Bs[Nh-1] = oldest Finger tensor with age a = (2**Nb - 1)*Na*dt
-        #self.Gs = []
         # initialize Finger tensors:
         for i in range(self.Nh):
             self.Bs.append(dolfin.Function(self.fn.Tau, name='Finger tensor'))
             self.Bs[i].assign(dolfin.interpolate(self.I, self.fn.Tau))
-            # IWB shear moduli
-            # self.Gs.append(dolfin.Function(self.fn.P))
-            # self.Gs[i].assign(dolfin.interpolate(dolfin.Constant(model.GInf*np.exp(-age[i]*self.dt/model.lambdaC)), self.fn.P))
         self.model.initialize(self)
         # for reference: store age a = 0 Finger tensor and shear modulus
         # nearest younger Finger tensor of age a = 0 is Id
         # nearest younger shear modulus of age a = 0 is GInf
         self.Bs0 = self.I
-        #self.Gs0 = dolfin.Constant(model.GInf)
 
     # loop should initialize all instantaneous functions etc afresh
     # kwargs can contain boolean settings for stress, strainrate, polystress,
@@ -160,10 +149,6 @@ class StokesSolver(object):
         B_ = dolfin.TrialFunction(self.fn.Tau)
         C = dolfin.TestFunction(self.fn.Tau)
         deformationsolver = dolfin.LUSolver()
-        # to solve the evolution equation for the shear moduli (IWB):
-        #G_ = dolfin.TrialFunction(self.fn.P)
-        #H = dolfin.TestFunction(self.fn.P)
-        #shearmodulussolver = dolfin.LUSolver('default')
 
         # time stepping
         for k in range(1, self.Nt + 1):
@@ -183,16 +168,6 @@ class StokesSolver(object):
             FTmat = dolfin.assemble(LHSFT)
             deformationsolver.set_operator(FTmat)
 
-            #lambdaInv = dolfin.Constant(1./model.lambdaC) + dolfin.Constant(np.sqrt(2.)/model.gammaC)*dolfin.sqrt(dolfin.inner(dolfin.sym(dolfin.grad(u)), dolfin.sym(dolfin.grad(u))))
-            #LHSSM = dolfin.Constant(1./self.dt)*dolfin.inner(G_,H)*dx
-            #LHSSM -= dolfin.inner(G_, dolfin.div(dolfin.outer(H, u)))*dx
-            #LHSSM += dolfin.inner(unPos('+')*G_('+') + unNeg('+')*G_('-'), dolfin.jump(H))*dolfin.dS
-            #LHSSM += dolfin.inner(un*G_, H)*ds
-            #LHSSM += dolfin.inner(lambdaInv*G_, H)*dx
-
-            #SMmat = dolfin.assemble(LHSSM)
-            #shearmodulussolver.set_operator(SMmat)
-
             for l in range(self.Nb - 1, -1, -1):
                 # iteration over history blocks in reverse order
                 # l = 0: da = dt (finest resolution)
@@ -203,26 +178,14 @@ class StokesSolver(object):
                 for m in range(self.Na - 1, -1, -1):
                     j = l*self.Na + m
                     RHSFT = dolfin.Constant(1./self.dt)*dolfin.inner(Bs[j], C)*dx
-                    #RHSSM = dolfin.Constant(1./self.dt)*dolfin.inner(Gs[j], H)*dx
                     if j == 0:
                         # nearest younger Finger tensor of age a = 0 is Id
                         # nearest younger shear modulus of age a = 0 is GInf
                         RHSFT -= dolfin.Constant(1./da)*dolfin.inner(Bs[0] - self.Bs0, C)*dx
-                        #RHSSM -= dolfin.Constant(1./da)*dolfin.inner(Gs[0] - self.Gs0, H)*dx
                     else:
                         RHSFT -= dolfin.Constant(1./da)*dolfin.inner(Bs[j] - Bs[j-1], C)*dx
-                        #RHSSM -= dolfin.Constant(1./da)*dolfin.inner(Gs[j] - Gs[j-1], H)*dx
                     FTvec = dolfin.assemble(RHSFT)
                     deformationsolver.solve (Bs[j].vector(), FTvec)
-                    #SMvec = dolfin.assemble(RHSSM)
-                    #shearmodulussolver.solve (Gs[j].vector(), SMvec)
-
-            # stress integral, DG0 approximation in age a
-            #for j in range(self.Nh):
-            #    if j == 0:
-            #        dolfin.assign(tau, self.fn.projectTensor(Gs[0]*(Bs[0] - self.Bs0)))
-            #    else:
-            #        dolfin.assign(tau, self.fn.projectTensor(tau + Gs[j]*(Bs[j] - Bs[j-1])))
 
             self.model.step(self, k, u, un, unPos, unNeg, tau)
 
@@ -232,8 +195,7 @@ class StokesSolver(object):
             # solve Stokes problem
             LHSNS = dolfin.Constant(rho/self.dt)*dolfin.inner(u_, v)*dx + dolfin.inner(dolfin.Constant(2.)*muS*dolfin.sym(dolfin.grad(u_)), dolfin.sym(dolfin.grad(v)))*dx - p_*dolfin.div(v)*dx - q*dolfin.div(u_)*dx
             RHSNS = dolfin.Constant(rho/self.dt)*dolfin.inner(u0, v)*dx - dolfin.inner(tau, dolfin.sym(dolfin.grad(v)))*dx + dolfin.dot(dolfin.avg(tau)*n('+'), dolfin.jump(v))*dolfin.dS + dolfin.dot(tau*n, v)*ds
-            # TODO: assumes ds(1) and ds(2) to be inlet and outlet
-            #RHSNS -= dolfin.dot(pIn*n, v)*ds(1) + dolfin.dot(pOut*n, v)*ds(2)
+            # implement pressure boundary conditions for inlet/outlet:
             for idx,dp in self.dps.items():
                 RHSNS -= dolfin.dot(dp*n, v)*ds(idx)
 
