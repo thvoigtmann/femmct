@@ -1,13 +1,14 @@
 import numpy as np
-import dolfin
+import dolfin as fe
+from dolfin import div, outer, inner, sym, grad, dot, jump, avg, dS
 from .aux import FunctionSpaces, DevNullFile, filtered_kwargs
 
 def dirichlet_u (constant):
-    return lambda up, boundaries, idx: dolfin.DirichletBC(up.sub(0), dolfin.Constant(constant), boundaries, idx)
+    return lambda up, boundaries, idx: fe.DirichletBC(up.sub(0), fe.Constant(constant), boundaries, idx)
 def p_inlet (dp):
-    return lambda up, boundaries, idx: dolfin.Constant(dp)
+    return lambda up, boundaries, idx: fe.Constant(dp)
 def p_outlet (dp):
-    return lambda up, boundaries, idx: dolfin.Constant(dp)
+    return lambda up, boundaries, idx: fe.Constant(dp)
 
 # rho: density, muS: solvent viscosity
 def default_parameters ():
@@ -16,24 +17,27 @@ def default_parameters ():
       'muS': 1.0,
     }
 
+TWO = fe.Constant(2.)
+
 
 class StokesSolver(object):
     def __init__(self, mesh, **kwargs):
-        self.I = dolfin.Constant(((1., 0.), (0., 1.)))
+        self.I = fe.Constant(((1., 0.), (0., 1.)))
 
         self.fn = FunctionSpaces(mesh, **kwargs)
 
-        kwargs2 = filtered_kwargs(kwargs, dolfin.Measure.__call__)
-        self.dx = dolfin.Measure('dx', mesh)
-        self.ds = dolfin.Measure('ds', mesh)(**kwargs2)
+        kwargs2 = filtered_kwargs(kwargs, fe.Measure.__call__)
+        self.dx = fe.Measure('dx', mesh)
+        self.ds = fe.Measure('ds', mesh)(**kwargs2)
 
-        self.n = dolfin.FacetNormal(mesh)
+        self.n = fe.FacetNormal(mesh)
 
         self.BClist = []
         self.BCs = {}
         self.dps = {}
         if 'boundary_conditions' in kwargs:
-            self.apply_bc (kwargs['boundary_conditions'], kwargs['subdomain_data'])
+            self.apply_bc (kwargs['boundary_conditions'],
+                           kwargs['subdomain_data'])
 
         self.callback = lambda obj, step: None
         self.post_step_callback = lambda obj, t: None
@@ -49,7 +53,7 @@ class StokesSolver(object):
     def apply_bc (self, boundary_conditions, subdomain_data = None):
         for mark_idx,bcfunc in boundary_conditions.items():
             bc = bcfunc(self.fn.UP, subdomain_data, mark_idx)
-            if isinstance(bc, dolfin.Constant):
+            if isinstance(bc, fe.Constant):
                 self.dps[mark_idx] = bc
             else:
                 self.BCs[mark_idx] = bc
@@ -58,7 +62,8 @@ class StokesSolver(object):
     # initialize makes new empty arrays for Finger and G tensors
     # ie clears all history-related information
     # Nt: time steps, Na: steps per age block, Nb: age blocks
-    def initialize (self, model = None, T = 50., Nt = 500, Na = 16, Nb = 6, parameters = default_parameters()):
+    def initialize (self, model = None, T = 50., Nt = 500, Na = 16, Nb = 6,
+        parameters = default_parameters()):
         self.parameters = parameters
         self.model = model
 
@@ -72,7 +77,8 @@ class StokesSolver(object):
         # anything that exceeds Nt will never be needed
         Nbmax = int(np.ceil(np.log2(self.Nt/self.Na + 1.)))
         if self.Nb > Nbmax:
-            print('(INFO) Using only', Nbmax, 'instead of', self.Nb, 'blocks of deformation fields')
+            print('(INFO) Using only', Nbmax, 'instead of', self.Nb,
+                  'blocks of deformation fields')
             self.Nb = Nbmax
 
         # total number of deformation fields to store
@@ -86,8 +92,8 @@ class StokesSolver(object):
         # Bs[Nh-1] = oldest Finger tensor with age a = (2**Nb - 1)*Na*dt
         # initialize Finger tensors:
         for i in range(self.Nh):
-            self.Bs.append(dolfin.Function(self.fn.Tau, name='Finger tensor'))
-            self.Bs[i].assign(dolfin.interpolate(self.I, self.fn.Tau))
+            self.Bs.append(fe.Function(self.fn.Tau, name='Finger tensor'))
+            self.Bs[i].assign(fe.interpolate(self.I, self.fn.Tau))
         self.model.initialize(self)
         # for reference: store age a = 0 Finger tensor and shear modulus
         # nearest younger Finger tensor of age a = 0 is Id
@@ -99,73 +105,74 @@ class StokesSolver(object):
     # or N1, True to calculate them (and possibly output, depending on whether
     # the file has been created), they all default to False except stress and
     # strainrate that default to true
-    def loop (self, stress=True, strainrate=True, polystress=False, N1=False, normalize_pressure=True, **kwargs):
+    def loop (self, stress=True, strainrate=True, polystress=False, N1=False,
+              normalize_pressure=True, **kwargs):
         n, dx, ds = self.n, self.dx, self.ds
-        #Bs, Gs = self.Bs, self.Gs
         Bs = self.Bs
 
         # trial and test functions
-        u_, p_ = dolfin.TrialFunctions(self.fn.UP)
-        v, q = dolfin.TestFunctions(self.fn.UP)
+        u_, p_ = fe.TrialFunctions(self.fn.UP)
+        v, q = fe.TestFunctions(self.fn.UP)
         # functions to solve for
-        u, p = dolfin.Function(self.fn.U), dolfin.Function(self.fn.P)
+        u, p = fe.Function(self.fn.U), fe.Function(self.fn.P)
 
-        up = dolfin.Function(self.fn.UP)
-        tau = dolfin.Function(self.fn.Tau)
-        u0 = dolfin.Function(self.fn.U)
+        up = fe.Function(self.fn.UP)
+        tau = fe.Function(self.fn.Tau)
+        u0 = fe.Function(self.fn.U)
 
-        rho = self.parameters['rho']
-        muS = self.parameters['muS']
+        rho = fe.Constant(self.parameters['rho'])
+        two_muS = fe.Constant(2.*self.parameters['muS'])
 
         t = 0.
-        self.velocity = dolfin.Function(self.fn.U, name = 'velocity')
-        self.pressure = dolfin.Function(self.fn.P, name = 'pressure')
-
+        self.velocity = fe.Function(self.fn.U, name = 'velocity')
+        self.pressure = fe.Function(self.fn.P, name = 'pressure')
         self.velocityFile << (self.velocity, t)
         self.pressureFile << (self.pressure, t)
 
         if stress:
-            self.stress = dolfin.Function(self.fn.Tau, name = 'total stress')
+            self.stress = fe.Function(self.fn.Tau, name = 'total stress')
             self.stressFile << (self.stress, t)
         else:
             self.stress = None
         if strainrate:
-            self.strainrate = dolfin.Function(self.fn.Tau, name = 'strain rate')
+            self.strainrate = fe.Function(self.fn.Tau, name = 'strain rate')
             self.strainrateFile << (self.strainrate, t)
         else:
             self.strainrate = None
         if polystress:
-            self.polystress = dolfin.Function(self.fn.Tau, name = 'polystress')
+            self.polystress = fe.Function(self.fn.Tau, name = 'polystress')
             self.polystressFile << (self.polystress, t)
         else:
             self.polystress = None
         if N1:
-            self.N1 = dolfin.Function(self.fn.P, name = 'N1')
+            self.N1 = fe.Function(self.fn.P, name = 'N1')
             self.N1File << (self.N1, t)
         else:
             self.N1 = None
 
         # to solve the evolution equation for the Finger tensors:
-        B_ = dolfin.TrialFunction(self.fn.Tau)
-        C = dolfin.TestFunction(self.fn.Tau)
-        deformationsolver = dolfin.LUSolver()
+        B_ = fe.TrialFunction(self.fn.Tau)
+        C = fe.TestFunction(self.fn.Tau)
+        deformationsolver = fe.LUSolver()
+
+        invdt = fe.Constant(1./self.dt)
 
         # time stepping
         for k in range(1, self.Nt + 1):
             print('Time Step ', k, ' out of ', self.Nt)
             t += self.dt
 
-            un = dolfin.dot(u, self.n)
-            unPos = (un + abs(un))/dolfin.Constant(2.)
-            unNeg = (un - abs(un))/dolfin.Constant(2.)
+            un = dot(u, self.n)
+            unPos = (un + abs(un))/TWO
+            unNeg = (un - abs(un))/TWO
 
             # evolution equation for the Finger tensors and shear moduli
-            LHSFT = dolfin.Constant(1./self.dt) * dolfin.inner(B_,C)*dx
-            LHSFT -= dolfin.inner(B_, dolfin.div(dolfin.outer(C, u)))*dx
-            LHSFT += dolfin.inner(unPos('+')*B_('+') + unNeg('+')*B_('-'), dolfin.jump(C))*dolfin.dS
-            LHSFT += dolfin.inner(un*B_, C)*ds
-            LHSFT -= dolfin.inner(dolfin.grad(u)*B_ + B_*dolfin.grad(u).T, C)*dx
-            FTmat = dolfin.assemble(LHSFT)
+            LHSFT = invdt * inner(B_,C)*dx
+            LHSFT -= inner(B_, div(outer(C, u)))*dx
+            LHSFT += inner(unPos('+')*B_('+') + unNeg('+')*B_('-'), jump(C))*dS
+            LHSFT += inner(un*B_, C)*ds
+            LHSFT -= inner(grad(u)*B_ + B_*grad(u).T, C)*dx
+            FTmat = fe.assemble(LHSFT)
             deformationsolver.set_operator(FTmat)
 
             for l in range(self.Nb - 1, -1, -1):
@@ -175,16 +182,17 @@ class StokesSolver(object):
                 # l = 2: da = 4*dt
                 # ...
                 da = 2**l*self.dt
+                invda = fe.Constant(1./da)
                 for m in range(self.Na - 1, -1, -1):
                     j = l*self.Na + m
-                    RHSFT = dolfin.Constant(1./self.dt)*dolfin.inner(Bs[j], C)*dx
+                    RHSFT = invdt*inner(Bs[j], C)*dx
                     if j == 0:
                         # nearest younger Finger tensor of age a = 0 is Id
                         # nearest younger shear modulus of age a = 0 is GInf
-                        RHSFT -= dolfin.Constant(1./da)*dolfin.inner(Bs[0] - self.Bs0, C)*dx
+                        RHSFT -= invda*inner(Bs[0] - self.Bs0, C)*dx
                     else:
-                        RHSFT -= dolfin.Constant(1./da)*dolfin.inner(Bs[j] - Bs[j-1], C)*dx
-                    FTvec = dolfin.assemble(RHSFT)
+                        RHSFT -= invda*inner(Bs[j] - Bs[j-1], C)*dx
+                    FTvec = fe.assemble(RHSFT)
                     deformationsolver.solve (Bs[j].vector(), FTvec)
 
             self.model.step(self, k, u, un, unPos, unNeg, tau)
@@ -193,39 +201,47 @@ class StokesSolver(object):
             self.callback(self, k)
 
             # solve Stokes problem
-            LHSNS = dolfin.Constant(rho/self.dt)*dolfin.inner(u_, v)*dx + dolfin.inner(dolfin.Constant(2.)*muS*dolfin.sym(dolfin.grad(u_)), dolfin.sym(dolfin.grad(v)))*dx - p_*dolfin.div(v)*dx - q*dolfin.div(u_)*dx
-            RHSNS = dolfin.Constant(rho/self.dt)*dolfin.inner(u0, v)*dx - dolfin.inner(tau, dolfin.sym(dolfin.grad(v)))*dx + dolfin.dot(dolfin.avg(tau)*n('+'), dolfin.jump(v))*dolfin.dS + dolfin.dot(tau*n, v)*ds
+            LHSNS = invdt*rho*inner(u_, v)*dx \
+                  + inner(two_muS*sym(grad(u_)), sym(grad(v)))*dx \
+                  - p_*div(v)*dx - q*div(u_)*dx
+            RHSNS = invdt*rho*inner(u0, v)*dx \
+                  - inner(tau, sym(grad(v)))*dx \
+                  + dot(avg(tau)*n('+'), jump(v))*dS + dot(tau*n, v)*ds
             # implement pressure boundary conditions for inlet/outlet:
             for idx,dp in self.dps.items():
-                RHSNS -= dolfin.dot(dp*n, v)*ds(idx)
+                RHSNS -= dot(dp*n, v)*ds(idx)
 
-            dolfin.solve(LHSNS == RHSNS, up, self.BClist, **kwargs)
+            fe.solve(LHSNS == RHSNS, up, self.BClist, **kwargs)
 
-            dolfin.assign(u, up.sub(0))
-            dolfin.assign(p, up.sub(1))
+            fe.assign(u, up.sub(0))
+            fe.assign(p, up.sub(1))
 
             # export the current time step
-            dolfin.assign(self.velocity, u)
+            fe.assign(self.velocity, u)
             if normalize_pressure:
-                dolfin.assign(self.pressure, self.fn.projectScalar(p - dolfin.Constant(dolfin.assemble(p*dx)/dolfin.assemble(dolfin.Constant(1.)*dx))))
+                fe.assign(self.pressure, self.fn.projectScalar(
+                    p - fe.assemble(p*dx)/fe.assemble(fe.Constant(1.)*dx)))
             else:
-                dolfin.assign(self.pressure, p)
+                fe.assign(self.pressure, p)
             self.velocityFile << (self.velocity, t)
             self.pressureFile << (self.pressure, t)
 
             if self.stress:
-                dolfin.assign(self.stress, self.fn.projectTensor(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u)) + tau - self.pressure*self.I))
+                fe.assign(self.stress, self.fn.projectTensor(
+                    two_muS*sym(grad(u)) + tau - self.pressure*self.I))
                 self.stressFile << (self.stress, t)
             if self.strainrate:
-                dolfin.assign(self.strainrate, self.fn.projectTensor(dolfin.Constant(2.)*dolfin.sym(dolfin.grad(u))))
+                fe.assign(self.strainrate, self.fn.projectTensor(
+                    TWO*sym(grad(u))))
                 self.strainrateFile << (self.strainrate, t)
             if self.polystress:
-                dolfin.assign(self.polystress, tau)
+                fe.assign(self.polystress, tau)
                 self.polystressFile << (self.polystress, t)
             if self.N1:
-                dolfin.assign(self.N1, self.fn.projectScalar(dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[0,0] + tau[0,0] - dolfin.Constant(2.*muS)*dolfin.sym(dolfin.grad(u))[1,1] - tau[1,1]))
+                fe.assign(self.N1, self.fn.projectScalar(
+                      two_muS*sym(grad(u))[0,0] + tau[0,0]
+                    - two_muS*sym(grad(u))[1,1] - tau[1,1]))
                 self.N1File << (self.N1, t)
-
 
             # prepare for next time step
             u0.assign(u)
@@ -233,11 +249,11 @@ class StokesSolver(object):
             self.post_step_callback(self, t)
 
     def create_files(self, path='.', polystress=False, N1=False):
-        self.velocityFile = dolfin.File(path + '/velocity.pvd')
-        self.pressureFile = dolfin.File(path + '/pressure.pvd')
-        self.stressFile = dolfin.File(path + '/stress.pvd')
-        self.strainrateFile = dolfin.File(path + '/strainrate.pvd')
+        self.velocityFile = fe.File(path + '/velocity.pvd')
+        self.pressureFile = fe.File(path + '/pressure.pvd')
+        self.stressFile = fe.File(path + '/stress.pvd')
+        self.strainrateFile = fe.File(path + '/strainrate.pvd')
         if polystress:
-            self.polystressFile = dolfin.File(path + '/polystress.pvd')
+            self.polystressFile = fe.File(path + '/polystress.pvd')
         if N1:
-            self.N1File = dolfin.File(path + '/N1.pvd')
+            self.N1File = fe.File(path + '/N1.pvd')

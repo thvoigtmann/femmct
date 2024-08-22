@@ -2,7 +2,7 @@ import dolfin
 import femmct
 import numpy as np
 
-path = 'mcttest'
+path = 'mcttest_tmp'
 
 # make mesh
 
@@ -77,7 +77,6 @@ def switchoff_dp (solver_obj, step):
 
 solver.callback = switchoff_dp
 
-model = femmct.IntegralWhiteMetznerModel (Ginf=1.0, lambdaC=10., gammaC=0.1)
 model = femmct.mct.F12Model (v1 = 2.*(np.sqrt(2.)-1.) + 0.01/(np.sqrt(2.)-1.), v2 = 2.)
 #solver.initialize (model = model, T = 50.4, Nt = 500, Na = 8, Nb = 6)
 solver.initialize (model = model, T = 50.4, Nt = 500, Na = 4, Nb = 3)
