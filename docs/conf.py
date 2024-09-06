@@ -40,3 +40,5 @@ html_static_path = ['_static']
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
 
+# need to mock importing fenics as readthedocs doesn't have it
+autodoc_mock_imports = ['dolfin']
