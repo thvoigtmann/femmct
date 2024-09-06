@@ -1,6 +1,16 @@
 # .readthedocs.yml
 
-build:
-  image: latest
+version: 2
 
-requirements_file: requirements.txt
+build:
+  os: ubuntu-22.04
+  image: latest
+  tools:
+    python: "3.12"
+
+sphinx:
+  configuration: docs/conf.py
+
+python:
+  install:
+    - requirements: requirements.txt
