@@ -21,8 +21,25 @@ TWO = fe.Constant(2.)
 
 
 class StokesSolver(object):
+    """Incompressible Stokes equation solver with deformation field history.
+
+    This class provides a solver for the incompressible Stokes equation that
+    interfaces with integral constitutive equations that are based on the
+    deformation field history (given through the Finger tensors, evaluated
+    on a logarithmic age grid)."""
     def __init__(self, mesh, **kwargs):
+        """Initialization of the Stokes solver.
+
+        Parameters
+        ----------
+        mesh : dolfin.Mesh
+            Mesh for the numerical computation.
+        **kwargs : dict, optional
+            Extra arguments to set boundary conditions (see `apply_bc`)
+            and to fine-tune dolfin settings.
+        """
         self.I = fe.Constant(((1., 0.), (0., 1.)))
+        #self.I = fe.Constant(np.diag(np.ones(mesh.geometric_dimension())))
 
         self.fn = FunctionSpaces(mesh, **kwargs)
 
@@ -51,6 +68,23 @@ class StokesSolver(object):
 
 
     def apply_bc (self, boundary_conditions, subdomain_data = None):
+        """Add boundary condition to the solver.
+
+        Parameters
+        ----------
+        boundary_conditions : dict
+            This should be a dict whose keys are the integer values
+            used in `subdomain_data` to mark the relevant regions of the
+            mesh, and whose entries are functions that return either a
+            dolfin.Constant (interpreted as a pressure value to be set)
+            or a suitable dolfin.DirichletBC object.
+            See `femmct.dirichlet_u` or `femmct.p_inlet` or
+            `femmct.p_outlet` for examples.
+        subdomain_data : dolfin.MeshFunction, optional
+            A `size_t` function containing zeros for non-boundary nodes,
+            and integer values corresponding to the boundary-condition
+            labels used in `boundary_conditions` on the boundary nodes.
+        """
         for mark_idx,bcfunc in boundary_conditions.items():
             bc = bcfunc(self.fn.UP, subdomain_data, mark_idx)
             if isinstance(bc, fe.Constant):
@@ -64,6 +98,39 @@ class StokesSolver(object):
     # Nt: time steps, Na: steps per age block, Nb: age blocks
     def initialize (self, model = None, T = 50., Nt = 500, Na = 16, Nb = 6,
         parameters = default_parameters()):
+        """Initialize the Stokes solver.
+
+        Parameters
+        ----------
+        model : femmct.ICEModel, default: None
+            Class object that implements the integral constitutive equation.
+            Defaults to `None`, which just solves the Newtonian background
+            fluid. The `model` should be used to specify the additional
+            non-Newtonian stresses.
+        T : float, optional
+            Maximum time for which to solve.
+        Nt : int, default: 500
+            Number of time steps (determines the time step together with `T`).
+        Na : int, default: 16
+            Number of time steps in each block of age information.
+        Nb : int, default: 6
+            Number of blocks of age information, where each block contains
+            `Na` points and each additional block stores age information
+            on twice the time step as the previous one.
+        parameters : dict, optional
+            Setting for numerical parameters in the Stokes equation.
+            Should contain keys 'rho' and 'muS' for the density and the
+            Newtonian background viscosity.
+
+        Notes
+        -----
+        The parameters `Nt`, `Na`, and `Nb` might be adjusted depending
+        on the specific model in case the implementation requires certain
+        relations between them. Also, the number of history blocks `Nb`
+        will be cut to those that are actually needed for the specified
+        maximum time interval; any older history would not enter the
+        equations anyway.
+        """
         self.parameters = parameters
         self.model = model
 
@@ -100,13 +167,41 @@ class StokesSolver(object):
         # nearest younger shear modulus of age a = 0 is GInf
         self.Bs0 = self.I
 
-    # loop should initialize all instantaneous functions etc afresh
-    # kwargs can contain boolean settings for stress, strainrate, polystress,
-    # or N1, True to calculate them (and possibly output, depending on whether
-    # the file has been created), they all default to False except stress and
-    # strainrate that default to true
     def loop (self, stress=True, strainrate=True, polystress=False, N1=False,
               normalize_pressure=True, **kwargs):
+        """Time-step loop to solver Stokes equation with ICE.
+
+        Parameters
+        ----------
+        stress : bool, default: True
+            If True, calculate the stress field and write to file.
+        strainrate : bool, default: True
+            If True, calculate the strain rate field and write to file.
+        polystress : bool, default: False
+            If True, calculate the non-Newtonian "polymeric" stress
+            and write separately to a file.
+        N1 : bool, default: False
+            If True, calculate the first normal-stress difference
+            separately.
+        normalize_pressure : bool, default: True
+            If True, the pressure written to the output file will be
+            normalized to 1/volume, since the overall stress magnitude
+            does not play a role in the incompressible Stokes equation.
+            This setting only affects the output, not the calculation.
+        **kwargs : dict, optional
+            Optional parameters passed to `dolfin.solve()`.
+
+        Note
+        ----
+        The stress is given by the addition of the Newtonian stress,
+        the pressure gradient, and the non-Newtonian stress. To get the
+        stress contribution from the non-Newtonian constitutive law,
+        set `polystress` to `True`. The first normal-stress difference
+        is calculated separately when setting `N1` to `True`; since this
+        performs the projection on the finite-element function space
+        properly, this is better than evaluating the difference a posteriori
+        from the polystress file.
+        """
         n, dx, ds = self.n, self.dx, self.ds
         Bs = self.Bs
 
@@ -249,6 +344,32 @@ class StokesSolver(object):
             self.post_step_callback(self, t)
 
     def create_files(self, path='.', polystress=False, N1=False):
+        """Create output files for the solutions.
+
+        By default, no output files will be created. Calling this
+        function, by default the velocity, pressure, total stress,
+        and strainrate will be stored. The non-Newtonian stress and
+        the first normal-stress difference can be separately stored.
+
+        Parameters
+        ----------
+        path : str, default: '.'
+            Base path where to write the files. Must be a directory,
+            and in there, the various `pvd` files and their `vtk`/`vtu`
+            companions will be created (one for each field and time step).
+        polystress : bool, default: False
+            If True, also create files for the non-Newtonian stress
+            separately.
+        N1 : bool, default: False
+            If True, also create files for the first normal-stress difference
+            separately.
+
+        Note
+        ----
+        Creating a file does not yet imply that the corresponding quantity
+        will be calculated, and vice versa. The calculation is controlled
+        by the flags given to `solve()`.
+        """
         self.velocityFile = fe.File(path + '/velocity.pvd')
         self.pressureFile = fe.File(path + '/pressure.pvd')
         self.stressFile = fe.File(path + '/stress.pvd')
