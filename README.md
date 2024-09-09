@@ -3,6 +3,8 @@ Finite-Element Method solver combined with the mode-coupling theory of the glass
 
 For application of the code, see [Steinhäuser, Treskatis, Turek, and Voigtmann, arXiv:2307.12764 (2023)](https://arxiv.org/abs/2307.12764).
 
+For work-in-progress documentation, see https://femmct.readthedocs.io/
+
 ## Installation
 
 Create a python virtual environment and activate it.

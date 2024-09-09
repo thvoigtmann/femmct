@@ -19,3 +19,10 @@ constitutive equation.
 .. autoclass:: femmct.stokessolver.StokesSolver
    :members:
    :inherited-members:
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
